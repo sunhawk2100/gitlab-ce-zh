@@ -6,85 +6,100 @@ if [[ -z "${DOCKER_USERNAME}" ]]; then
     DOCKER_USERNAME=twang2218
 fi
 
-function generate_branch_dockerfile() {
-    TAG=$1
-    VERSION=$2
-    BRANCH=$3
-    cat ./template/Dockerfile.branch.template | sed "s:{TAG}:${TAG}:g; s:{VERSION}:${VERSION}:g; s:{BRANCH}:${BRANCH}:g"
-}
+# Version related functions, such as 'generate()' are put in separate file.
+# shellcheck source=./versions.sh
+source $BASEDIR/versions.sh
 
-function generate_branch_v8_17_dockerfile() {
-    TAG=$1
-    VERSION=$2
-    BRANCH=$3
-    cat ./template/Dockerfile.branch.v8.17.template | sed "s:{TAG}:${TAG}:g; s:{VERSION}:${VERSION}:g; s:{BRANCH}:${BRANCH}:g"
-}
-
-function generate_tag_dockerfile() {
-    TAG=$1
-    VERSION=$2
-    cat ./template/Dockerfile.tag.template | sed "s:{TAG}:${TAG}:g; s:{VERSION}:${VERSION}:g;"
-}
-
-function generate_tag_v8_17_dockerfile() {
-    TAG=$1
-    VERSION=$2
-    cat ./template/Dockerfile.tag.v8.17.template | sed "s:{TAG}:${TAG}:g; s:{VERSION}:${VERSION}:g;"
+function generate_dockerfile() {
+    local template=$1
+    local tag=$2
+    local version=$3
+    local branch=$4
+    cat ./template/$template | sed "s:{TAG}:$tag:g; s:{VERSION}:$version:g; s:{BRANCH}:$branch:g"
 }
 
 function generate_docker_compose_yml() {
-    TAG_LATEST=$1
-    cat ./template/docker-compose.yml.template | sed "s:{TAG_LATEST}:${TAG_LATEST}:g"
+    cat ./template/docker-compose.yml.template | sed "s:{TAG_LATEST}:$1:g"
 }
 
 function generate_readme() {
-    TAG_8_14=$1
-    TAG_8_15=$2
-    TAG_8_16=$3
-    TAG_8_17=$4
-    TAG_9_0=$5
-    TAG_LATEST=$6
-    TESTING_VERSION=$7
-    TESTING_TAG=$8
-    TESTING_BRANCH=$9
     cat ./template/README.md.template | sed \
-        -e "s/{TAG_8_14}/${TAG_8_14}/g" \
-        -e "s/{TAG_8_15}/${TAG_8_15}/g" \
-        -e "s/{TAG_8_16}/${TAG_8_16}/g" \
-        -e "s/{TAG_8_17}/${TAG_8_17}/g" \
-        -e "s/{TAG_9_0}/${TAG_9_0}/g" \
-        -e "s/{TESTING_VERSION}/${TESTING_VERSION}/g" \
-        -e "s/{TESTING_TAG}/${TESTING_TAG}/g" \
-        -e "s/{TESTING_BRANCH}/${TESTING_BRANCH}/g" \
-        -e "s/{TAG_LATEST}/${TAG_LATEST}/g" \
+        -e "s/{TAG_1}/${VERSIONS[0]}/g" \
+        -e "s/{TAG_2}/${VERSIONS[1]}/g" \
+        -e "s/{TAG_3}/${VERSIONS[2]}/g" \
+        -e "s/{TAG_4}/${VERSIONS[3]}/g" \
+        -e "s/{TAG_5}/${VERSIONS[4]}/g" \
+        -e "s/{BRANCH_1}/${VERSIONS[0]%.*}/g" \
+        -e "s/{BRANCH_2}/${VERSIONS[1]%.*}/g" \
+        -e "s/{BRANCH_3}/${VERSIONS[2]%.*}/g" \
+        -e "s/{BRANCH_4}/${VERSIONS[3]%.*}/g" \
+        -e "s/{BRANCH_5}/${VERSIONS[4]%.*}/g" \
+        -e "s/{TAG_LATEST}/$1/g" \
+        -e "s/{TESTING_VERSION}/$2/g" \
+        -e "s/{TESTING_TAG}/$3/g" \
+        -e "s/{TESTING_BRANCH}/$4/g" \
         -e "/{COMPOSE_EXAMPLE}/ {r docker-compose.yml" -e "d" -e "}"
 }
 
+function generate() {
+    local version_latest=${VERSION_LATEST}
+    local testing_version=${VERSION_LATEST}
+    local testing_tag=${VERSION_LATEST}${APPENDIX_LATEST}
+    local testing_branch=${BRANCHES_LATEST/./-}-stable-zh
+    local number_of_version=${#VERSIONS[@]}
+
+    for i in `seq 0 $(expr $number_of_version - 1)`
+    do
+        mkdir -p "${BRANCHES[$i]}"
+        generate_dockerfile \
+            "${TEMPLATES[$i]}" \
+            "${VERSIONS[$i]}${APPENDIX[$i]}" \
+            "v${VERSIONS[$i]}" \
+            "v${VERSIONS[$i]}-zh" \
+            > "${BRANCHES[$i]}/Dockerfile"
+    done
+    generate_dockerfile \
+        "Dockerfile.branch.v10.template" \
+        "${testing_tag}" \
+        "v${testing_version}" \
+        "${testing_branch}" \
+        > testing/Dockerfile
+    generate_docker_compose_yml \
+        "${version_latest}" \
+        > docker-compose.yml
+    generate_readme \
+        "${version_latest}" \
+        "${testing_version}" \
+        "${testing_tag}" \
+        "${testing_branch}" \
+        > README.md
+}
+
 function build_and_publish() {
-    BRANCH=$1
-    TAG=$2
+    local branch=$1
+    local tag=$2
     set -xe
-    docker build -t "${DOCKER_USERNAME}/gitlab-ce-zh:${TAG}" "${BRANCH}"
+    docker build -t "${DOCKER_USERNAME}/gitlab-ce-zh:$tag" $branch
     if [[ -n "${DOCKER_PASSWORD}" ]]; then
-        echo "Publish image '${DOCKER_USERNAME}/gitlab-ce-zh:${TAG}' to Docker Hub ..."
+        echo "Publish image '${DOCKER_USERNAME}/gitlab-ce-zh:$tag' to Docker Hub ..."
         docker login -u "${DOCKER_USERNAME}" -p "${DOCKER_PASSWORD}"
-        docker push "${DOCKER_USERNAME}/gitlab-ce-zh:${TAG}"
+        docker push "${DOCKER_USERNAME}/gitlab-ce-zh:$tag"
     fi
     set +xe
 }
 
 function check_build_publish() {
-    BRANCH=$1
-    TAG=$2
+    local branch=$1
+    local tag=$2
 
-    if [[ -n "${TAG}" ]]; then
-        echo "Found tag ${TAG}, building ${DOCKER_USERNAME}/gitlab-ce-zh:${TAG} ..."
-        build_and_publish "${BRANCH}" "${TAG}"
-    elif (git show --pretty="" --name-only | grep Dockerfile | grep -q ${BRANCH}); then
-        echo "${BRANCH} has been updated, rebuilding ${DOCKER_USERNAME}/gitlab-ce-zh:${BRANCH} ..."
-        build_and_publish "${BRANCH}" "${BRANCH}"
+    if [[ -n "$tag" ]]; then
+        echo "Found tag $tag, building ${DOCKER_USERNAME}/gitlab-ce-zh:$tag ..."
+        build_and_publish $branch $tag
+    elif (git show --pretty="" --name-only | grep Dockerfile | grep -q $branch); then
+        echo "$branch has been updated, rebuilding ${DOCKER_USERNAME}/gitlab-ce-zh:$branch ..."
+        build_and_publish $branch $branch
     else
-        echo "Nothing changed in ${BRANCH}."
+        echo "Nothing changed in $branch."
     fi
 }
 
@@ -92,16 +107,17 @@ function branch() {
     if [ "$#" != "3" ]; then
         echo "Usage: $0 branch <image-tag> <version-tag> <branch>"
         echo ""
-        echo "  e.g. $0 branch 8.15.0-ce.0 v8.15.0 8-15-stable-zh"
+        echo "  e.g. $0 branch 9.2.0-ce.0 v9.2.0 9-2-stable-zh"
         exit 1
     fi
-    TAG=$1
-    VERSION=$2
-    BRANCH=$3
 
-    Dockerfile=$(generate_branch_v8_17_dockerfile ${TAG} ${VERSION} ${BRANCH})
+    local tag=$1
+    local version=$2
+    local branch=$3
+
+    Dockerfile=$(generate_dockerfile Dockerfile.branch.v10.template $tag $version $branch)
     echo "$Dockerfile"
-    echo "$Dockerfile" | docker build -t "${DOCKER_USERNAME}/gitlab-ce-zh:${BRANCH}" -
+    echo "$Dockerfile" | docker build -t "${DOCKER_USERNAME}/gitlab-ce-zh:$branch" -
     echo ""
     echo "List of available images:"
     docker images ${DOCKER_USERNAME}/gitlab-ce-zh
@@ -111,40 +127,33 @@ function tag() {
     if [ "$#" != "2" ]; then
         echo "Usage: $0 tag <image-tag> <version-tag>"
         echo ""
-        echo "  e.g. $0 tag 8.15.0-ce.0 v8.15.0"
+        echo "  e.g. $0 tag 9.2.0-ce.0 v9.2.0"
         exit 1
     fi
-    TAG=$1
-    VERSION=$2
 
-    Dockerfile=$(generate_tag_v8_17_dockerfile ${TAG} ${VERSION})
+    local tag=$1
+    local version=$2
+
+    Dockerfile=$(generate_dockerfile Dockerfile.tag.v10.template $tag $version)
     echo "$Dockerfile"
-    echo "$Dockerfile" | docker build -t "${DOCKER_USERNAME}/gitlab-ce-zh:${VERSION:1}" -
+    echo "$Dockerfile" | docker build -t "${DOCKER_USERNAME}/gitlab-ce-zh:${version:1}" -
     echo ""
     echo "List of available images:"
     docker images ${DOCKER_USERNAME}/gitlab-ce-zh
 }
 
-# Version related functions, such as 'generate()' are put in separate file.
-# shellcheck source=./build-version.sh
-source $BASEDIR/build-version.sh
 
 function ci() {
     env | grep TRAVIS
     if [[ -n "${TRAVIS_TAG}" ]]; then
-        TAG="${TRAVIS_TAG:1}"
-        MAJOR_VERSION=$(echo "${TAG}" | cut -d'.' -f1)
-        MINOR_VERSION=$(echo "${TAG}" | cut -d'.' -f2)
-        BRANCH="${MAJOR_VERSION}.${MINOR_VERSION}"
-        check_build_publish "${BRANCH}" "${TAG}"
+        local tag="${TRAVIS_TAG:1}"
+        local branch="${tag%.*}"
+        check_build_publish $branch $tag
     elif [[ "${TRAVIS_BRANCH}" == "master" ]]; then
-        check_build_publish 8.14
-        check_build_publish 8.15
-        check_build_publish 8.16
-        check_build_publish 8.17
-        check_build_publish 9.0
+        for b in ${BRANCHES[@]}; do
+            check_build_publish $b
+        done
         check_build_publish testing
-        check_build_publish master
     else
         echo "Not in CI."
     fi
@@ -177,21 +186,21 @@ function run() {
 # */5 * * * * build.sh detect_and_build >> trigger.log 2>&1
 
 function prepare_branch() {
-    local TAG=$1
-    local BRANCH=$2
-    local TAG_DIR=$BASEDIR/gitlab-${TAG}
+    local tag=$1
+    local branch=$2
+    local tagDir=$BASEDIR/gitlab-$tag
 
     rm -rf $BRANCH_DIR
-    git clone https://gitlab.com/xhang/gitlab.git $TAG_DIR
-    cd $TAG_DIR || return 1
-    git checkout ${BRANCH}
+    git clone https://gitlab.com/xhang/gitlab.git $tagDir
+    cd $tagDir || return 1
+    git checkout $branch
 }
 
 function detect_branch_change() {
-    local TAG=$1
-    local TAG_DIR=$BASEDIR/gitlab-${TAG}
+    local tag=$1
+    local tagDir=$BASEDIR/gitlab-$tag
 
-    cd $TAG_DIR || return 2
+    cd $tagDir || return 2
     git remote update > /dev/null
     if ! (git status -uno | grep -q 'up-to-date') ; then
         return 0
@@ -201,23 +210,23 @@ function detect_branch_change() {
 }
 
 function trigger_build() {
-    local TAG=$1
+    local tag=$1
     curl --silent \
         --header "Content-Type: application/json" \
         --request POST \
-        --data "{\"docker_tag\": \"${TAG}\"}" \
+        --data "{\"docker_tag\": \"$tag\"}" \
         https://registry.hub.docker.com/u/twang2218/gitlab-ce-zh/trigger/f78a6063-8c23-4997-b925-92c8093b5e83/
     echo -e "\ndone."
 }
 
 function detect_and_build() {
-    local TAG=$1
-    if detect_branch_change $TAG; then
-        echo "`date`: Changes in '$TAG' detected..."
-        trigger_build $TAG
+    local tag=$1
+    if detect_branch_change $tag; then
+        echo "`date`: Changes in '$tag' detected..."
+        trigger_build $tag
         git pull
     # else
-    #     echo "`date`: Nothing changed in '$TAG'"
+    #     echo "`date`: Nothing changed in '$tag'"
     fi
 }
 
@@ -226,25 +235,57 @@ function update() {
     git pull
 }
 
-function main() {
-    Command=$1
+function vps() {
+    local command=$1
     shift
-    case "$Command" in
+    case "$command" in
+        create)
+            docker-machine create -d digitalocean \
+                --digitalocean-size=8gb \
+                --engine-opt=ipv6 \
+                --engine-opt=fixed-cidr-v6="2001:db8:1::/64" \
+                $@ gitlab
+            ;;
+        rm)
+            docker-machine rm $@ gitlab
+            ;;
+        env)
+            docker-machine env $@ gitlab
+            ;;
+        ip)
+            docker-machine ip gitlab
+            ;;
+        ssh)
+            docker-machine ssh gitlab $@
+            ;;
+        run)
+            docker run --name gitlab -d -p 3000:80 ${@:-"twang2218/gitlab-ce-zh:latest"}
+            ;;
+        stop)
+            docker rm -f gitlab
+            ;;
+        *)  echo "Usage: $0 vps <create|remove|env|ip|ssh>" ;;
+    esac
+}
+
+function main() {
+    local command=$1
+    shift
+    case "$command" in
         branch)     branch "$@" ;;
         tag)        tag "$@" ;;
         generate)   generate ;;
         run)        run "$@" ;;
         ci)         ci ;;
         prepare)
-            prepare_branch testing 9-0-stable-zh
-            prepare_branch master master-zh
+            prepare_branch testing  "${BRANCHES_LATEST/./-}-stable-zh"
             ;;
         detect_and_build)
             update
             detect_and_build testing
-            detect_and_build master
             ;;
-        *)          echo "Usage: $0 <branch|tag|generate|run|ci|prepare|detect_and_build>" ;;
+        vps)       vps "$@" ;;
+        *)         echo "Usage: $0 <branch|tag|generate|run|ci|prepare|detect_and_build|vps>" ;;
     esac
 }
 

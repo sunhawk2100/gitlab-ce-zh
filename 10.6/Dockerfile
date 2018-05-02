@@ -1,6 +1,6 @@
 FROM gitlab/gitlab-ce:10.6.4-ce.0
 
-ENV GITLAB_VERSION=10-6-stable-zh
+ENV GITLAB_VERSION=v10.6.4
 
 RUN set -xe \
     && export DEBIAN_FRONTEND=noninteractive \
@@ -14,8 +14,8 @@ ENV TZ=Asia/Shanghai
 
 ENV GITLAB_DIR=/opt/gitlab/embedded/service/gitlab-rails
 ENV GITLAB_ZH_GIT=https://gitlab.com/xhang/gitlab.git
-ENV SOURCE_BRANCH=v10.6.4
-ENV TARGET_BRANCH=10-6-stable-zh
+ENV SOURCE_BRANCH=${GITLAB_VERSION}
+ENV TARGET_BRANCH=${GITLAB_VERSION}-zh
 
 # Reference:
 # * https://gitlab.com/gitlab-org/omnibus-gitlab/blob/master/config/software/gitlab-rails.rb
@@ -35,17 +35,13 @@ RUN set -xe \
     && cd /tmp \
     && git clone ${GITLAB_ZH_GIT} gitlab \
     && cd gitlab \
-    && export REVISION=$(cat ${GITLAB_DIR}/REVISION) \
     && export IGNORE_DIRS=':!spec :!features :!.gitignore :!locale :!app/assets/javascripts/locale' \
-    && git diff --diff-filter=d ${SOURCE_BRANCH}..origin/${TARGET_BRANCH} -- . ${IGNORE_DIRS} > ../zh_CN.diff \
+    && git diff ${SOURCE_BRANCH}..${TARGET_BRANCH} -- .  ${IGNORE_DIRS} > ../zh_CN.diff \
     && echo " # Patching ..." \
     && patch -d ${GITLAB_DIR} -p1 < ../zh_CN.diff \
     && echo " # Copy locale files ..." \
     && git checkout ${TARGET_BRANCH} \
     && cp -R locale ${GITLAB_DIR}/ \
-    && echo " # Install missing Gem packages ..." \
-    && cd ${GITLAB_DIR} \
-    && bundle install \
     && echo " # Regenerating the assets" \
     && cd ${GITLAB_DIR} \
     && cp config/gitlab.yml.example config/gitlab.yml \
@@ -60,7 +56,7 @@ RUN set -xe \
     && export WEBPACK_REPORT=true \
     && export NO_COMPRESSION=true \
     && export NO_PRIVILEGE_DROP=true \
-    && yarn install \
+    && yarn install --frozen-lockfile \
     && bundle exec rake gettext:compile \
     && bundle exec rake gitlab:assets:compile \
     && echo " # Cleaning ..." \
